@@ -10,6 +10,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
+#include "DrawDebugHelpers.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -20,7 +21,7 @@ AInterviewLocomotionCharacter::AInterviewLocomotionCharacter()
 {
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
-		
+
 	// Don't rotate when the controller rotates. Let that just affect the camera.
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
@@ -52,6 +53,16 @@ AInterviewLocomotionCharacter::AInterviewLocomotionCharacter()
 
 	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bTickEvenWhenPaused = false;
+	PrimaryActorTick.TickGroup = TG_PrePhysics;
+
+	CharacterState = ECharacterState::CS_None;
+	MovementState = EMovementState::MS_None;
+
+	JumpSettings.bCanJump = true;
+	JumpSettings.HighMinJumpVelocityZ = -600.0f;
+	JumpSettings.JumpGroundTraceLength = 20.0f;
 }
 
 void AInterviewLocomotionCharacter::BeginPlay()
@@ -69,6 +80,39 @@ void AInterviewLocomotionCharacter::BeginPlay()
 	}
 }
 
+void AInterviewLocomotionCharacter::Tick(float DeltaTime)
+{
+	ACharacter::Tick(DeltaTime);
+
+	FVector& CharacterVelocity = GetCharacterMovement()->Velocity;
+	GroundSpeed = FVector(CharacterVelocity.X, CharacterVelocity.Y, 0.0f).Length();
+
+	// First we need to set the correct movement state
+	UpdateMovementState();
+	// Set the correct charater state 
+	UpdateCharacterState();
+
+	if (MovementState == EMovementState::MS_InAir)
+	{
+		if (CharacterVelocity.Z < JumpSettings.HighMinJumpVelocityZ && JumpState != EJumpState::JS_LandHigh)
+		{
+			const FVector ToGround = -GetCapsuleComponent()->GetUpVector();
+
+			const FVector Start = GetCapsuleComponent()->GetComponentLocation() + (ToGround * GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight());
+			const FVector End = Start + (ToGround * JumpSettings.JumpGroundTraceLength);
+
+			// Perform trace to retrieve hit info
+			FCollisionQueryParams TraceParams(FName(TEXT("GroundTrace")), false, this);
+
+			DrawDebugLine(GetWorld(), Start, End, FColor::Red, false, 0.25f);
+
+			FHitResult Result;
+			if(GetWorld()->LineTraceSingleByChannel(Result, Start, End, ECollisionChannel::ECC_WorldDynamic, TraceParams))
+				TransitionJumpState(EJumpState::JS_LandHigh);
+		}
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Input
 
@@ -76,10 +120,10 @@ void AInterviewLocomotionCharacter::SetupPlayerInputComponent(UInputComponent* P
 {
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent)) {
-		
+
 		// Jumping
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AInterviewLocomotionCharacter::OnJumpStart);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AInterviewLocomotionCharacter::OnJumpEnd);
 
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AInterviewLocomotionCharacter::Move);
@@ -93,8 +137,94 @@ void AInterviewLocomotionCharacter::SetupPlayerInputComponent(UInputComponent* P
 	}
 }
 
+void AInterviewLocomotionCharacter::UpdateMovementState()
+{
+	bool bIsInAir = GetMovementComponent()->IsFalling();
+	if (bIsInAir)
+	{
+		TransitionMovementState(EMovementState::MS_InAir);
+	}
+	else
+	{
+		TransitionMovementState(EMovementState::MS_Grounded);
+	}
+}
+
+void AInterviewLocomotionCharacter::UpdateCharacterState()
+{
+	CharacterState = ECharacterState::CS_None;
+	if (MovementState == EMovementState::MS_Grounded)
+	{
+		if (GroundSpeed > 150.0f)
+			TransitionCharacterState(ECharacterState::CS_Running);
+		else if (GroundSpeed > 0.0f)
+			TransitionCharacterState(ECharacterState::CS_Walking);
+	}
+}
+
+void AInterviewLocomotionCharacter::TransitionMovementState(EMovementState inNewState)
+{
+	if (MovementState == EMovementState::MS_InAir && inNewState == EMovementState::MS_Grounded)
+	{
+		if(JumpState != EJumpState::JS_LandHigh)
+			TransitionJumpState(EJumpState::JS_LandLow);
+	}
+	MovementState = inNewState;
+}
+
+void AInterviewLocomotionCharacter::TransitionCharacterState(ECharacterState inNewState)
+{
+	CharacterState = inNewState;
+}
+
+void AInterviewLocomotionCharacter::TransitionJumpState(EJumpState inNewState)
+{
+	if (inNewState == EJumpState::JS_LandLow)
+		JumpSettings.bCanJump = true;
+
+	JumpState = inNewState;
+}
+
+void AInterviewLocomotionCharacter::OnJumpAnimStart()
+{
+	ACharacter::Jump();
+}
+
+void AInterviewLocomotionCharacter::OnJumpAnimEnded()
+{
+	JumpSettings.bCanJump = true; // Allow to jump again
+	TransitionJumpState(EJumpState::JS_None);
+}
+
+void AInterviewLocomotionCharacter::OnJumpStart()
+{
+	if (JumpSettings.bCanJump)
+	{
+		JumpSettings.bCanJump = false;
+
+		TransitionJumpState(EJumpState::JS_Start);
+	}
+}
+
+void AInterviewLocomotionCharacter::OnJumpEnd()
+{
+	ACharacter::StopJumping();
+}
+
 void AInterviewLocomotionCharacter::Move(const FInputActionValue& Value)
 {
+	if (JumpState != EJumpState::JS_None)
+	{
+		// Cannot move until animation stops...
+		if (JumpState == EJumpState::JS_LandHigh)
+			return;
+
+		// Allow character to get off ground before moving..
+		if (JumpState == EJumpState::JS_Start && GetCharacterMovement()->Velocity.Z < 100.0f)
+		{
+			return;
+		}
+	}
 	// input is a Vector2D
 	FVector2D MovementVector = Value.Get<FVector2D>();
 
@@ -106,7 +236,7 @@ void AInterviewLocomotionCharacter::Move(const FInputActionValue& Value)
 
 		// get forward vector
 		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-	
+
 		// get right vector 
 		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 
