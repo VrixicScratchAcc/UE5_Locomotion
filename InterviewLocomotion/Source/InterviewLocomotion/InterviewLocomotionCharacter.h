@@ -66,8 +66,13 @@ struct FSlideSettings
 {
 	GENERATED_USTRUCT_BODY();
 
+	UPROPERTY(VisibleAnywhere)
+	float SlideSpeed;
+
 	UPROPERTY(EditAnywhere)
 	float DeaccelerationRate;
+
+	FVector SlideDirection;
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -125,7 +130,6 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CharacterMotion, meta = (AllowPrivateAccess = "true"))
 	FSlideSettings SlideSettings;
-	float SlideSpeed;
 
 private:
 	void UpdateMovementState();

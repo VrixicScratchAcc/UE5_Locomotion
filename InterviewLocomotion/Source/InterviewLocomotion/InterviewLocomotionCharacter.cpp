@@ -69,8 +69,8 @@ AInterviewLocomotionCharacter::AInterviewLocomotionCharacter()
 	JumpSettings.HighMinJumpVelocityZ = -600.0f;
 	JumpSettings.JumpGroundTraceLength = 20.0f;
 
-	SlideSettings.DeaccelerationRate = 1.25f;
-	SlideSpeed = 0.0f;
+	SlideSettings.DeaccelerationRate = 0.1f;
+	SlideSettings.SlideSpeed = 1000.0f;
 }
 
 void AInterviewLocomotionCharacter::BeginPlay()
@@ -124,14 +124,14 @@ void AInterviewLocomotionCharacter::Tick(float DeltaTime)
 
 		if (CharacterState == ECharacterState::CS_Sliding)
 		{
-			if (GroundSpeed > 10.0f)
+			if (GroundSpeed < 10.0f && SlideSettings.SlideSpeed < 10.0f)
 			{
-				const FVector Force = -GetCapsuleComponent()->GetForwardVector() * SlideSettings.DeaccelerationRate;
-				GetMovementComponent()->AddInputVector(Force, true);
+				TransitionCharacterState(ECharacterState::CS_None);
 			}
 			else
 			{
-				TransitionCharacterState(ECharacterState::CS_None);
+				SlideSettings.SlideSpeed -= SlideSettings.DeaccelerationRate;
+				GetCharacterMovement()->AddInputVector(SlideSettings.SlideDirection * SlideSettings.SlideSpeed, true);
 			}
 		}
 	}
@@ -161,7 +161,7 @@ void AInterviewLocomotionCharacter::SetupPlayerInputComponent(UInputComponent* P
 	}
 	else
 	{
-		UE_LOG(LogTemplateCharacter, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
+		//UE_LOG(LogTemplateCharacter, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
 	}
 }
 
@@ -199,7 +199,7 @@ bool AInterviewLocomotionCharacter::TransitionMovementState(EMovementState inNew
 {
 	if (MovementState == EMovementState::MS_InAir && inNewState == EMovementState::MS_Grounded)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("MovementState[Old, New]: [%s, %s]"), *FString(gMovementStateString[(uint8)MovementState]), *FString(gMovementStateString[(uint8)inNewState]));
+		//UE_LOG(LogTemp, Warning, TEXT("MovementState[Old, New]: [%s, %s]"), *FString(gMovementStateString[(uint8)MovementState]), *FString(gMovementStateString[(uint8)inNewState]));
 		if (JumpState != EJumpState::JS_LandHigh)
 			TransitionJumpState(EJumpState::JS_None);
 	}
@@ -216,7 +216,7 @@ bool AInterviewLocomotionCharacter::TransitionCharacterState(ECharacterState inN
 			return false;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("CharacterState[Old, New]: [%s, %s]"), *FString(gCharacterStateString[(uint8)CharacterState]), *FString(gCharacterStateString[(uint8)inNewState]));
+	//UE_LOG(LogTemp, Warning, TEXT("CharacterState[Old, New]: [%s, %s]"), *FString(gCharacterStateString[(uint8)CharacterState]), *FString(gCharacterStateString[(uint8)inNewState]));
 	CharacterState = inNewState;
 	return true;
 }
@@ -233,7 +233,7 @@ bool AInterviewLocomotionCharacter::TransitionJumpState(EJumpState inNewState)
 		if(inNewState == EJumpState::JS_None)
 			JumpSettings.bCanJump = true;
 
-	UE_LOG(LogTemp, Warning, TEXT("JumpState[Old, New]: [%s, %s]"), *FString(gJumpStateString[(uint8)JumpState]), *FString(gJumpStateString[(uint8)inNewState]));
+	//UE_LOG(LogTemp, Warning, TEXT("JumpState[Old, New]: [%s, %s]"), *FString(gJumpStateString[(uint8)JumpState]), *FString(gJumpStateString[(uint8)inNewState]));
 	JumpState = inNewState;
 	return true;
 }
@@ -267,8 +267,8 @@ void AInterviewLocomotionCharacter::OnSlideStart()
 {
 	if (TransitionCharacterState(ECharacterState::CS_Sliding))
 	{
-		const FVector Force = GetCapsuleComponent()->GetForwardVector() * 100.0f;
-		GetMovementComponent()->AddInputVector(Force, true);
+		SlideSettings.SlideSpeed = 1000.0f;
+		SlideSettings.SlideDirection = GetCapsuleComponent()->GetForwardVector();
 	}
 }
 
