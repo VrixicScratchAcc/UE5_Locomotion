@@ -21,20 +21,29 @@ enum class EMovementState : uint8
 {
 	MS_None, // Error: something is wrong
 	MS_Grounded,
-	MS_InAir
+	MS_InAir,
 };
 
-/**
-* 
-*/
 UENUM(BLueprintType)
 enum class EJumpState : uint8
 {
-	JS_None = 0,
+	JS_None = 0, // Used as JS_LandLow
 	JS_Start,
 	JS_Loop,
-	JS_LandLow, // Landed from a low height
 	JS_LandHigh, // Landed from a high height
+};
+
+/**
+* The state of the character, used for animations and overall gameplay...
+*/
+UENUM(BlueprintType)
+enum class ECharacterState :uint8
+{
+	CS_None = 0, // Meaning standing or in air if jumping..
+	CS_Walking,
+	CS_Running,
+	CS_Crouching,
+	CS_Sliding,
 };
 
 USTRUCT(BlueprintType)
@@ -52,18 +61,13 @@ struct FJumpSettings
 	float JumpGroundTraceLength;
 };
 
-/**
-* The state of the character, used for animations and overall gameplay...
-*/
-UENUM(BlueprintType)
-enum class ECharacterState :uint8
+USTRUCT(BlueprintType)
+struct FSlideSettings
 {
-	CS_Invalid = 0, // Something wrong has happened..
-	CS_None, // Meaning standing or in air if jumping..
-	CS_Walking,
-	CS_Running,
-	CS_Crouching,
-	CS_Sliding,
+	GENERATED_USTRUCT_BODY();
+
+	UPROPERTY(EditAnywhere)
+	float DeaccelerationRate;
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -90,6 +94,10 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	UInputAction* JumpAction;
 
+	/** Slide Input Action */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	UInputAction* SlideAction;
+
 	/** Move Input Action */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	UInputAction* MoveAction;
@@ -115,18 +123,22 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CharacterMotion, meta = (AllowPrivateAccess = "true"))
 	FJumpSettings JumpSettings;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = CharacterMotion, meta = (AllowPrivateAccess = "true"))
+	FSlideSettings SlideSettings;
+	float SlideSpeed;
+
 private:
 	void UpdateMovementState();
 	void UpdateCharacterState();
 
 	/** Transitions the current movement state to a new movement state */
-	void TransitionMovementState(EMovementState inNewState);
+	bool TransitionMovementState(EMovementState inNewState);
 
 	/** Transitions the current characters state to a new character state */
-	void TransitionCharacterState(ECharacterState inNewState);
+	bool TransitionCharacterState(ECharacterState inNewState);
 
 	/** Transitions the current jump state to a new jump state */
-	void TransitionJumpState(EJumpState inNewState);
+	bool TransitionJumpState(EJumpState inNewState);
 
 	/** Called from BP when animation notify for jump start fires */
 	UFUNCTION(BlueprintCallable, Category=CharacterAnimation)
@@ -137,6 +149,9 @@ private:
 	/** Actual jump functions for Character Movement. Binded to Input. */
 	void OnJumpStart();
 	void OnJumpEnd();
+
+	void OnSlideStart();
+	void OnSlideEnd();
 
 protected:
 

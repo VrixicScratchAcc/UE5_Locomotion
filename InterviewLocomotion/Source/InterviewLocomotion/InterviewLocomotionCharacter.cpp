@@ -17,6 +17,10 @@ DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 //////////////////////////////////////////////////////////////////////////
 // AInterviewLocomotionCharacter
 
+const char* gMovementStateString[(uint8)EMovementState::MS_InAir + 1] = { ("MS_None"), ("MS_Grounded"), ("MS_InAir") };
+const char* gJumpStateString[(uint8)EJumpState::JS_LandHigh + 1] = { ("JS_None"), ("JS_Start"), ("JS_Loop"), ("JS_LandHigh") };
+const char* gCharacterStateString[(uint8)ECharacterState::CS_Sliding + 1] = { ("CS_None"), ("CS_Walking"), ("CS_Running"), ("CS_Crouching"), ("CS_Sliding") };
+
 AInterviewLocomotionCharacter::AInterviewLocomotionCharacter()
 {
 	// Set size for collision capsule
@@ -59,10 +63,14 @@ AInterviewLocomotionCharacter::AInterviewLocomotionCharacter()
 
 	CharacterState = ECharacterState::CS_None;
 	MovementState = EMovementState::MS_None;
+	JumpState = EJumpState::JS_None;
 
 	JumpSettings.bCanJump = true;
 	JumpSettings.HighMinJumpVelocityZ = -600.0f;
 	JumpSettings.JumpGroundTraceLength = 20.0f;
+
+	SlideSettings.DeaccelerationRate = 1.25f;
+	SlideSpeed = 0.0f;
 }
 
 void AInterviewLocomotionCharacter::BeginPlay()
@@ -89,8 +97,6 @@ void AInterviewLocomotionCharacter::Tick(float DeltaTime)
 
 	// First we need to set the correct movement state
 	UpdateMovementState();
-	// Set the correct charater state 
-	UpdateCharacterState();
 
 	if (MovementState == EMovementState::MS_InAir)
 	{
@@ -107,8 +113,26 @@ void AInterviewLocomotionCharacter::Tick(float DeltaTime)
 			DrawDebugLine(GetWorld(), Start, End, FColor::Red, false, 0.25f);
 
 			FHitResult Result;
-			if(GetWorld()->LineTraceSingleByChannel(Result, Start, End, ECollisionChannel::ECC_WorldDynamic, TraceParams))
+			if (GetWorld()->LineTraceSingleByChannel(Result, Start, End, ECollisionChannel::ECC_WorldDynamic, TraceParams))
 				TransitionJumpState(EJumpState::JS_LandHigh);
+		}
+	}
+	else // Grounded
+	{
+		// Set the correct charater state 
+		UpdateCharacterState();
+
+		if (CharacterState == ECharacterState::CS_Sliding)
+		{
+			if (GroundSpeed > 10.0f)
+			{
+				const FVector Force = -GetCapsuleComponent()->GetForwardVector() * SlideSettings.DeaccelerationRate;
+				GetMovementComponent()->AddInputVector(Force, true);
+			}
+			else
+			{
+				TransitionCharacterState(ECharacterState::CS_None);
+			}
 		}
 	}
 }
@@ -124,6 +148,10 @@ void AInterviewLocomotionCharacter::SetupPlayerInputComponent(UInputComponent* P
 		// Jumping
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &AInterviewLocomotionCharacter::OnJumpStart);
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &AInterviewLocomotionCharacter::OnJumpEnd);
+
+		// Sliding
+		EnhancedInputComponent->BindAction(SlideAction, ETriggerEvent::Started, this, &AInterviewLocomotionCharacter::OnSlideStart);
+		EnhancedInputComponent->BindAction(SlideAction, ETriggerEvent::Completed, this, &AInterviewLocomotionCharacter::OnSlideEnd);
 
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AInterviewLocomotionCharacter::Move);
@@ -152,9 +180,14 @@ void AInterviewLocomotionCharacter::UpdateMovementState()
 
 void AInterviewLocomotionCharacter::UpdateCharacterState()
 {
-	CharacterState = ECharacterState::CS_None;
+	if (CharacterState == ECharacterState::CS_Sliding)
+	{
+		return;
+	}
+
 	if (MovementState == EMovementState::MS_Grounded)
 	{
+		TransitionCharacterState(ECharacterState::CS_None);
 		if (GroundSpeed > 150.0f)
 			TransitionCharacterState(ECharacterState::CS_Running);
 		else if (GroundSpeed > 0.0f)
@@ -162,27 +195,47 @@ void AInterviewLocomotionCharacter::UpdateCharacterState()
 	}
 }
 
-void AInterviewLocomotionCharacter::TransitionMovementState(EMovementState inNewState)
+bool AInterviewLocomotionCharacter::TransitionMovementState(EMovementState inNewState)
 {
 	if (MovementState == EMovementState::MS_InAir && inNewState == EMovementState::MS_Grounded)
 	{
-		if(JumpState != EJumpState::JS_LandHigh)
-			TransitionJumpState(EJumpState::JS_LandLow);
+		UE_LOG(LogTemp, Warning, TEXT("MovementState[Old, New]: [%s, %s]"), *FString(gMovementStateString[(uint8)MovementState]), *FString(gMovementStateString[(uint8)inNewState]));
+		if (JumpState != EJumpState::JS_LandHigh)
+			TransitionJumpState(EJumpState::JS_None);
 	}
+
 	MovementState = inNewState;
+	return true;
 }
 
-void AInterviewLocomotionCharacter::TransitionCharacterState(ECharacterState inNewState)
+bool AInterviewLocomotionCharacter::TransitionCharacterState(ECharacterState inNewState)
 {
+	if (inNewState == ECharacterState::CS_Sliding)
+	{
+		if (CharacterState != ECharacterState::CS_Running || JumpState != EJumpState::JS_None)
+			return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("CharacterState[Old, New]: [%s, %s]"), *FString(gCharacterStateString[(uint8)CharacterState]), *FString(gCharacterStateString[(uint8)inNewState]));
 	CharacterState = inNewState;
+	return true;
 }
 
-void AInterviewLocomotionCharacter::TransitionJumpState(EJumpState inNewState)
+bool AInterviewLocomotionCharacter::TransitionJumpState(EJumpState inNewState)
 {
-	if (inNewState == EJumpState::JS_LandLow)
-		JumpSettings.bCanJump = true;
+	if (CharacterState == ECharacterState::CS_Sliding)
+	{
+		TransitionCharacterState(ECharacterState::CS_None);
+		return false;
+	}
 
+	if (JumpState!= EJumpState::JS_None)
+		if(inNewState == EJumpState::JS_None)
+			JumpSettings.bCanJump = true;
+
+	UE_LOG(LogTemp, Warning, TEXT("JumpState[Old, New]: [%s, %s]"), *FString(gJumpStateString[(uint8)JumpState]), *FString(gJumpStateString[(uint8)inNewState]));
 	JumpState = inNewState;
+	return true;
 }
 
 void AInterviewLocomotionCharacter::OnJumpAnimStart()
@@ -200,9 +253,8 @@ void AInterviewLocomotionCharacter::OnJumpStart()
 {
 	if (JumpSettings.bCanJump)
 	{
-		JumpSettings.bCanJump = false;
-
-		TransitionJumpState(EJumpState::JS_Start);
+		if(TransitionJumpState(EJumpState::JS_Start))
+			JumpSettings.bCanJump = false;
 	}
 }
 
@@ -211,8 +263,22 @@ void AInterviewLocomotionCharacter::OnJumpEnd()
 	ACharacter::StopJumping();
 }
 
+void AInterviewLocomotionCharacter::OnSlideStart()
+{
+	if (TransitionCharacterState(ECharacterState::CS_Sliding))
+	{
+		const FVector Force = GetCapsuleComponent()->GetForwardVector() * 100.0f;
+		GetMovementComponent()->AddInputVector(Force, true);
+	}
+}
+
+void AInterviewLocomotionCharacter::OnSlideEnd()
+{
+}
+
 void AInterviewLocomotionCharacter::Move(const FInputActionValue& Value)
 {
+	// Early exits for jump state
 	if (JumpState != EJumpState::JS_None)
 	{
 		// Cannot move until animation stops...
@@ -225,6 +291,11 @@ void AInterviewLocomotionCharacter::Move(const FInputActionValue& Value)
 			return;
 		}
 	}
+
+	// Early exit for charater state validation..
+	if (CharacterState == ECharacterState::CS_Sliding)
+		return;
+
 	// input is a Vector2D
 	FVector2D MovementVector = Value.Get<FVector2D>();
 
